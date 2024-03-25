@@ -1,2 +1,2 @@
-rootProject.name = "Accidental F&F"
+rootProject.name = "F&F"
 
