@@ -86,8 +86,6 @@ public class SkeletonScriptGraphicsContext extends ScriptGraphicsContext {
 
                     long elapsedTime = isScriptRunning ? Duration.between(startTime, Instant.now()).getSeconds() + totalElapsedTime : totalElapsedTime;
                     ImGui.SeparatorText(String.format("Runtime: %02d:%02d:%02d", elapsedTime / 3600, (elapsedTime % 3600) / 60, elapsedTime % 60));
-                    ImGui.SameLine();
-                    ImGui.Text(" - Will Level based on FM level and move on when required");
                     script.CollectEggs = ImGui.Checkbox("Collect eggs", script.CollectEggs);
                     script.CollectFertiliser = ImGui.Checkbox("Collect fertiliser", script.CollectFertiliser);
                     script.Zygomite = ImGui.Checkbox("Zygomite", script.Zygomite);
