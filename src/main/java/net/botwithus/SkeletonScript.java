@@ -1,18 +1,23 @@
 package net.botwithus;
 
-import net.botwithus.api.game.hud.Dialog;
+import java.time.Instant;
+import java.util.Iterator;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
+
 import net.botwithus.api.game.hud.inventories.Backpack;
 import net.botwithus.internal.scripts.ScriptDefinition;
-import net.botwithus.rs3.events.EventBus;
-import net.botwithus.rs3.events.impl.InventoryUpdateEvent;
 import net.botwithus.rs3.game.Client;
 import net.botwithus.rs3.game.Coordinate;
+import net.botwithus.rs3.game.Distance;
 import net.botwithus.rs3.game.Item;
+import net.botwithus.rs3.game.actionbar.ActionBar;
 import net.botwithus.rs3.game.hud.interfaces.Component;
 import net.botwithus.rs3.game.hud.interfaces.Interfaces;
-import net.botwithus.rs3.game.js5.types.vars.VarDomainType;
 import net.botwithus.rs3.game.minimenu.MiniMenu;
 import net.botwithus.rs3.game.minimenu.actions.ComponentAction;
+import net.botwithus.rs3.game.minimenu.actions.SelectableAction;
 import net.botwithus.rs3.game.movement.Movement;
 import net.botwithus.rs3.game.movement.NavPath;
 import net.botwithus.rs3.game.queries.builders.characters.NpcQuery;
@@ -23,360 +28,497 @@ import net.botwithus.rs3.game.queries.results.EntityResultSet;
 import net.botwithus.rs3.game.queries.results.ResultSet;
 import net.botwithus.rs3.game.scene.entities.characters.npc.Npc;
 import net.botwithus.rs3.game.scene.entities.characters.player.LocalPlayer;
+import net.botwithus.rs3.game.scene.entities.characters.player.Player;
 import net.botwithus.rs3.game.scene.entities.object.SceneObject;
 import net.botwithus.rs3.game.skills.Skills;
-import net.botwithus.rs3.game.vars.VarManager;
 import net.botwithus.rs3.script.Execution;
 import net.botwithus.rs3.script.LoopingScript;
 import net.botwithus.rs3.script.config.ScriptConfig;
 import net.botwithus.rs3.util.RandomGenerator;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-
-import static net.botwithus.rs3.game.Client.getLocalPlayer;
+import net.botwithus.rs3.util.Regex;
 
 public class SkeletonScript extends LoopingScript {
-
-    private LocalPlayer player = Client.getLocalPlayer();
-    boolean CollectEggs;
-    boolean CollectFertiliser;
-    boolean Zygomite;
+    private ScriptState currentState;
+    private int startingFiremakingLevel;
+    public boolean runScript = false;
+    private boolean scriptRunning = false;
+    private Instant scriptStartTime;
+    private int startingXP;
+    private boolean dinosaurPropellent = false;
+    private boolean sharpShells = false;
+    private boolean dinoArrows = false;
+    private boolean lastHandledWereBadEggs = false;
+    private boolean atBank = false;
+    private HandleSharpShells currentSharpShellsState;
     boolean cutOption;
     boolean dryOption;
     boolean cutAndDryOption;
-    private boolean scriptRunning = false;
-    private Instant scriptStartTime;
-    private boolean isCollectingEggs = false;
-    private ScriptState currentState = ScriptState.IDLE;
-    private int startingFiremakingLevel;
-    public int getStartingFiremakingLevel() {
-        return startingFiremakingLevel;
+    private HandleDinoArrows currentDinoState;
+
+    public SkeletonScript(String name, ScriptConfig scriptConfig, ScriptDefinition scriptDefinition) {
+        super(name, scriptConfig, scriptDefinition);
+        this.currentSharpShellsState = SkeletonScript.HandleSharpShells.COLLECT_EGGS;
+        this.cutOption = this.isCutOption();
+        this.dryOption = this.isDryOption();
+        this.cutAndDryOption = this.isCutAndDryOption();
+        this.currentDinoState = SkeletonScript.HandleDinoArrows.CONFIGURE;
+        this.currentState = SkeletonScript.ScriptState.COLLECT_FROM_STORM_BARN;
     }
-    private final Coordinate INCUBATOR_LOCATION = new Coordinate(5208, 2352, 0);
-    private final Coordinate COMPOST_LOCATION = new Coordinate(5228, 2326, 0);
-    private final Coordinate PILE_OF_EGGS_LOCATION = new Coordinate(5219, 2349, 0);
-    private final String[] dinosaurNames = {
-            "Feral dinosaur (unchecked)", "Venomous dinosaur (unchecked)", "Ripper dinosaur (unchecked)",
-            "Brutish dinosaur (unchecked)", "Arcane apoterrasaur (unchecked)", "Scimitops (unchecked)",
-            "Bagrada rex (unchecked)", "Spicati apoterrasaur (unchecked)", "Asciatops (unchecked)",
-            "Corbicula rex (unchecked)", "Oculi apoterrasaur (unchecked)", "Malletops (unchecked)",
-            "Pavosaurus rex (unchecked)"
-    };
 
     public void startScript() {
-        println("Attempting to start script...");
-        if (!scriptRunning) {
-            scriptRunning = true;
-            scriptStartTime = Instant.now();
-            println("Script started at: " + scriptStartTime);
-        } else {
-            println("Attempted to start script, but it is already running.");
+        if (!this.scriptRunning) {
+            this.scriptRunning = true;
+            this.scriptStartTime = Instant.now();
+            this.currentState = SkeletonScript.ScriptState.COLLECT_FROM_STORM_BARN;
+            this.currentSharpShellsState = SkeletonScript.HandleSharpShells.COLLECT_EGGS;
+            this.println("Script started successfully.");
         }
+
     }
 
     public void stopScript() {
-        if (scriptRunning) {
-            scriptRunning = false;
-            Instant stopTime = Instant.now();
-            println("Script stopped at: " + stopTime);
-            long duration = Duration.between(scriptStartTime, stopTime).toMillis();
-            println("Script ran for: " + duration + " milliseconds.");
-        } else {
-            println("Attempted to stop script, but it is not running.");
+        if (this.scriptRunning) {
+            this.scriptRunning = false;
+            this.println("Script stopped successfully.");
+            this.currentState = SkeletonScript.ScriptState.COLLECT_FROM_STORM_BARN;
+            this.currentSharpShellsState = SkeletonScript.HandleSharpShells.COLLECT_EGGS;
         }
-    }
-
-    enum ScriptState {
-        IDLE,
-        NAVIGATING_TO_EGGS,
-        COLLECTING_EGGS,
-        HANDLING_GOOD_EGGS,
-        HANDLING_BAD_EGGS,
-        DEPOSITING_EGGS,
-        DEPOSITING_DINOSAURS,
-        INITIAL_STATE,
-        NAVIGATING_TO_BARN,
-        COLLECTING_ANIMALS,
-        TUMMISAURUS,
-        ROOTLESAURUS,
-        BEANASAURUS,
-        BERRISAURUS,
-        USE_FERTILISER,
-        NAVIGATING_TO_ZYGOMITE,
-        CHOOSE_OPTION,
-        INTERACT_WITH_ZYGOMITE,
-
 
     }
 
-    public SkeletonScript(String s, ScriptConfig scriptConfig, ScriptDefinition scriptDefinition) {
-        super(s, scriptConfig, scriptDefinition);
-        this.sgc = new SkeletonScriptGraphicsContext(getConsole(), this);
+    public boolean initialize() {
+        this.startingFiremakingLevel = Skills.FIREMAKING.getSkill().getLevel();
+        this.sgc = new SkeletonScriptGraphicsContext(this.getConsole(), this);
+        this.loopDelay = 590L;
+        return super.initialize();
     }
 
-    @Override
     public void onLoop() {
-        if (getLocalPlayer() != null && Client.getGameState() == Client.GameState.LOGGED_IN) {
-
-            if (!scriptRunning) {
-                return;
+        if (this.scriptRunning) {
+            if (this.isDinosaurPropellentOption()) {
+                this.HandleDinosaurPropellent();
+            } else if (this.isSharpShellsOption()) {
+                this.handleSharpShells();
+            } else if (this.isDinoArrowsOption()) {
+                this.HandleDinoArrows();
             }
         }
-        switch (currentState) {
-            case IDLE:
-                idle();
-                break;
-            case NAVIGATING_TO_EGGS:
-                moveToEggs();
-                break;
-            case COLLECTING_EGGS:
-                collectEggs();
-                break;
-            case HANDLING_GOOD_EGGS:
-                goodEggs();
-                break;
-            case HANDLING_BAD_EGGS:
-                badEggs();
-                break;
-            case DEPOSITING_DINOSAURS:
-                handleDinosaurs();
-                break;
-            case INITIAL_STATE:
-                determineInitialState();
-                break;
-            case NAVIGATING_TO_BARN:
-                moveToBarn();
-                break;
-            case COLLECTING_ANIMALS:
-                collectAnimals();
-                break;
-            case TUMMISAURUS:
-                tummisaurus();
-                break;
-            case ROOTLESAURUS:
-                rootlesaurus();
-                break;
-            case BEANASAURUS:
-                beanasaurus();
-                break;
-            case BERRISAURUS:
-                berrisaurus();
-                break;
-            case USE_FERTILISER:
-                useFertiliser();
-                break;
-            case NAVIGATING_TO_ZYGOMITE:
-                moveToZygomite();
-                break;
-            case CHOOSE_OPTION:
-                chooseOption();
-                break;
-            case INTERACT_WITH_ZYGOMITE:
-                interactBasedOnOption();
-                break;
-        }
 
-        if (CollectEggs) {
-            checkAndSwitchStates();
-        }
-        Execution.delay(RandomGenerator.nextInt(800, 1200));
     }
 
+    public void HandleDinosaurPropellent() {
+        if (this.scriptRunning) {
+            switch (this.currentState) {
+                case COLLECT_FROM_STORM_BARN:
+                    collectFromStormBarn();
+                    if (Backpack.isFull()) {
+                        this.currentState = SkeletonScript.ScriptState.FEED_TUMMISAURUS;
+                    }
+                    break;
+                case FEED_TUMMISAURUS:
+                    this.customDelay();
+                    this.feedAtTrough("Rooty mush trough", "Tummisaurus Rex", 5289, 2259, 0, SkeletonScript.ScriptState.MOVE_TO_INTERMEDIATE_POINT);
+                    this.currentState = SkeletonScript.ScriptState.MOVE_TO_INTERMEDIATE_POINT;
+                    break;
+                case MOVE_TO_INTERMEDIATE_POINT:
+                    this.customDelay();
+                    this.moveToIntermediatePoint();
+                    this.currentState = SkeletonScript.ScriptState.FEED_ROOTLESAURUS;
+                    break;
+                case FEED_ROOTLESAURUS:
+                    this.customDelay();
+                    this.feedAtTrough("Beany mush trough", "Rootlesaurus Rex", 5313, 2307, 0, SkeletonScript.ScriptState.FEED_BEANASAURUS);
+                    this.currentState = SkeletonScript.ScriptState.FEED_BEANASAURUS;
+                    break;
+                case FEED_BEANASAURUS:
+                    this.customDelay();
+                    this.feedAtTrough("Berry mush trough", "Beanasaurus Rex", 5332, 2291, 0, SkeletonScript.ScriptState.FEED_BERRISAURUS);
+                    this.currentState = SkeletonScript.ScriptState.FEED_BERRISAURUS;
+                    break;
+                case FEED_BERRISAURUS:
+                    this.customDelay();
+                    this.feedAtTrough("Cerealy mush trough", "Berrisaurus Rex", 5330, 2271, 0, SkeletonScript.ScriptState.USE_FERTILISER);
+                    this.currentState = SkeletonScript.ScriptState.USE_FERTILISER;
+                    break;
+                case USE_FERTILISER:
+                    this.customDelay();
+                    this.useFertiliser();
+                    this.currentState = SkeletonScript.ScriptState.COLLECT_FROM_STORM_BARN;
+            }
+        }
+
+    }
+
+    public boolean isDinosaurPropellentOption() {
+        return this.dinosaurPropellent;
+    }
+
+    public void setDinosaurPropellentOption(boolean dinosaurPropellent) {
+        this.dinosaurPropellent = dinosaurPropellent;
+        if (dinosaurPropellent) {
+            this.sharpShells = false;
+            this.dinoArrows = false;
+        }
+
+    }
+
+    public boolean isSharpShellsOption() {
+        return this.sharpShells;
+    }
+
+    public void setSharpShellsOption(boolean sharpShells) {
+        this.sharpShells = sharpShells;
+        if (sharpShells) {
+            this.dinosaurPropellent = false;
+            this.dinoArrows = false;
+        }
+
+    }
+
+    public boolean isDinoArrowsOption() {
+        return this.dinoArrows;
+    }
+
+    public void setDinoArrowsOption(boolean dinoArrows) {
+        this.dinoArrows = dinoArrows;
+        if (dinoArrows) {
+            this.dinosaurPropellent = false;
+            this.sharpShells = false;
+        }
+
+    }
+
+    public int getStartingFiremakingLevel() {
+        return this.startingFiremakingLevel;
+    }
+
+    private void moveToIntermediatePoint() {
+        boolean skipFirstTarget = RandomGenerator.nextBoolean();
+        boolean reachedFirstTarget = !skipFirstTarget;
+        boolean reachedSecondTarget = false;
+        Coordinate secondTargetCoord;
+        if (!skipFirstTarget) {
+            secondTargetCoord = this.randomizedCoordinate(5298, 2272, 0);
+            this.println("Attempting first target intermediate point: " + String.valueOf(secondTargetCoord));
+            this.moveAndWait(secondTargetCoord);
+        } else {
+            this.println("Skipping first intermediate point.");
+        }
+
+        secondTargetCoord = this.randomizedCoordinate(5310, 2290, 0);
+        this.println("Attempting second target intermediate point: " + String.valueOf(secondTargetCoord));
+        reachedSecondTarget = this.moveAndWait(secondTargetCoord);
+        if (reachedSecondTarget) {
+            this.currentState = SkeletonScript.ScriptState.FEED_ROOTLESAURUS;
+        } else {
+            this.println("Failed to reach the second intermediate point.");
+        }
+
+    }
+
+    private boolean moveAndWait(Coordinate targetCoord) {
+        Movement.walkTo(targetCoord.getX(), targetCoord.getY(), true);
+        long startTime = System.currentTimeMillis();
+        long timeout = 60000L;
+
+        while (System.currentTimeMillis() - startTime < timeout) {
+            if (Client.getLocalPlayer() == null) {
+                this.println("Local player instance not found.");
+                return false;
+            }
+
+            Coordinate currentLocation = Client.getLocalPlayer().getCoordinate();
+            double distance = Distance.between(currentLocation, targetCoord);
+            if (distance <= 8.0) {
+                this.println("Reached intermediate point: " + String.valueOf(targetCoord));
+                return true;
+            }
+        }
+
+        this.println("Timeout reached while trying to move to: " + String.valueOf(targetCoord));
+        return false;
+    }
     private void navigateTo(Coordinate destination) {
         if (Client.getLocalPlayer() == null) {
             return;
         }
-        println("Navigating to " + destination);
         Movement.traverse(NavPath.resolve(destination));
+        println("Navigating to " + destination);
         Execution.delayUntil(360000, () -> destination.equals(Client.getLocalPlayer().getCoordinate()));
     }
 
-    private void idle() {
-        println("Work, work...");
-        Execution.delay(RandomGenerator.nextInt(5000, 10000));
-        if (CollectEggs) {
-            currentState = ScriptState.NAVIGATING_TO_EGGS;
-        } else if (CollectFertiliser) {
-            currentState = ScriptState.NAVIGATING_TO_BARN;
-        } else if (Zygomite) {
-            currentState = ScriptState.NAVIGATING_TO_ZYGOMITE;
+    private void collectFromStormBarn() {
+        Coordinate destination = new Coordinate(5304, 2276, 0);
+
+        if (Client.getLocalPlayer() != null) {
+            Coordinate playerCoordinate = Client.getLocalPlayer().getCoordinate();
+
+            if (playerCoordinate.getRegionId() != 21003) {
+                navigateTo(destination);
+            }
         }
-    }
-    private void moveToEggs() {
-        SceneObject mysticalTreeObject = SceneObjectQuery.newQuery().name("Mystical tree").results().nearest();
-        Coordinate mysticalTree = new Coordinate(5301, 2293, 0);
-        Coordinate randomisedmysticalTree = randomizeLocation(mysticalTree, 1);
 
-
-        if (player.getCoordinate().getRegionId() == 20772) {
-            println("Already in the Mystical Tree region.");
-            checkAndSwitchStates();
+        if (Backpack.isFull()) {
+            println("Backpack is full, skipping collection from Storm Barn.");
         } else {
-            println("Navigating to Mystical Tree");
-            navigateTo(randomisedmysticalTree);
-
-            if (mysticalTreeObject != null) {
-                if (mysticalTreeObject.interact("Teleport")) {
-                    println("Teleported using Mystical Tree");
-                    Execution.delay(RandomGenerator.nextInt(3000, 5000));
-                    if (Interfaces.isOpen(1188)) {
-                        println("Teleported to Mystical Tree.");
-                        Execution.delay(RandomGenerator.nextInt(3000, 5000));
-                        Dialog.interact("Ben's carestyling salon.");
-                        Execution.delay(RandomGenerator.nextInt(3000, 5000));
-                        checkAndSwitchStates();
-                    }
-                }
+            SceneObject stormBarn = SceneObjectQuery.newQuery().name("Storm barn").results().nearestTo(destination);
+            if (stormBarn != null) {
+                println("Collecting from Storm Barn.");
+                stormBarn.interact("Collect");
+                Execution.delayUntil(30000L, Backpack::isFull);
+                // Update the script state as necessary
             }
         }
     }
 
-    private boolean isNearLocation(Coordinate playerLocation, Coordinate targetLocation, int threshold) {
-        int deltaX = playerLocation.getX() - targetLocation.getX();
-        int deltaY = playerLocation.getY() - targetLocation.getY();
-        double distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-
-        return distance <= threshold;
-    }
-
-    private boolean isNearIncubator() {
-        return isNearLocation(player.getCoordinate(), INCUBATOR_LOCATION, 25);
-    }
-
-    private boolean isNearCompost() {
-        return isNearLocation(player.getCoordinate(), COMPOST_LOCATION, 25);
-    }
-
-    private boolean isNearPileOfEggs() {
-        return isNearLocation(player.getCoordinate(), PILE_OF_EGGS_LOCATION, 25);
-    }
-
-    private void checkAndSwitchStates() {
-        if (Backpack.isFull()) {
-            handleFullBackpack();
-        } else if (isNearPileOfEggs()) {
-            currentState = ScriptState.COLLECTING_EGGS;
-        } else if (isNearIncubator() && countItems("Good egg") > 0) {
-            currentState = ScriptState.HANDLING_GOOD_EGGS;
-        } else if (isNearCompost() && countItems("Bad egg") > 0) {
-            currentState = ScriptState.HANDLING_BAD_EGGS;
+    private void feedAtTrough(String troughName, String dinoName, int x, int y, int z, ScriptState feedingState) {
+        while (Backpack.contains(new String[]{dinoName})) {
+            SceneObject trough = (SceneObject) SceneObjectQuery.newQuery().name(troughName).results().nearestTo(this.randomizedCoordinate(x, y, z));
+            if (trough != null) {
+                this.println("Moving to " + troughName + " to feed " + dinoName + ".");
+                this.println("Feeding " + dinoName + " at " + troughName + ".");
+                trough.interact("Feed");
+                Execution.delayUntil(60000L, () -> {
+                    return !Backpack.contains(new String[]{dinoName});
+                });
+                this.randomDelay();
+            }
         }
-        switch (currentState) {
-            case COLLECTING_EGGS:
+
+    }
+
+    private Coordinate randomizedCoordinate(int x, int y, int z) {
+        int randomX = x + ThreadLocalRandom.current().nextInt(-3, 2);
+        int randomY = y + ThreadLocalRandom.current().nextInt(-3, 2);
+        Coordinate coord = new Coordinate(randomX, randomY, z);
+        this.println("Generated randomized coordinate: " + String.valueOf(coord));
+        return coord;
+    }
+
+    private void useFertiliser() {
+        while (Backpack.contains(new String[]{"Potterington Blend #102 Fertiliser"})) {
+            this.println("Using Potterington Blend #102 Fertiliser");
+            ActionBar.useItem("Potterington Blend #102 Fertiliser", "Ignite");
+            this.randomDelay();
+            Execution.delayUntil(60000L, () -> {
+                return !Backpack.contains(new String[]{"Potterington Blend #102 Fertiliser"});
+            });
+            this.randomDelay();
+            this.currentState = SkeletonScript.ScriptState.COLLECT_FROM_STORM_BARN;
+        }
+
+    }
+
+    private void randomDelay() {
+        int delay = RandomGenerator.nextInt(250, 2000);
+        this.println("Applying a random delay of " + delay + " ms.");
+        Execution.delay((long) delay);
+    }
+
+    public void handleSharpShells() {
+        switch (this.currentSharpShellsState) {
+            case COLLECT_EGGS:
                 if (Backpack.isFull()) {
-                    currentState = countItems("Good egg") > countItems("Bad egg") ?
-                            ScriptState.HANDLING_GOOD_EGGS : ScriptState.HANDLING_BAD_EGGS;
+                    if (this.hasDinosaursToDeposit()) {
+                        this.currentSharpShellsState = SkeletonScript.HandleSharpShells.BANK_DINOSAURS;
+                    } else {
+                        this.currentSharpShellsState = SkeletonScript.HandleSharpShells.HANDLE_EGGS;
+                    }
+                } else {
+                    this.collectEggs();
                 }
                 break;
-            case HANDLING_GOOD_EGGS:
-                if (!Backpack.contains("Good egg")) {
-                    currentState = Backpack.isFull() ? ScriptState.DEPOSITING_EGGS : ScriptState.COLLECTING_EGGS;
-                }
+            case HANDLE_EGGS:
+                this.handleEggs();
                 break;
-            case HANDLING_BAD_EGGS:
-                if (!Backpack.contains("Bad egg")) {
-                    currentState = Backpack.isFull() ? ScriptState.DEPOSITING_EGGS : ScriptState.COLLECTING_EGGS;
-                }
+            case BANK_DINOSAURS:
+                this.bankDinosaurs();
                 break;
-            case DEPOSITING_EGGS:
-                currentState = ScriptState.COLLECTING_EGGS;
-                break;
+            default:
+                this.println("Script is idle or performing an unrecognized activity.");
         }
+
     }
 
-    private void handleFullBackpack() {
-        if (containsAnyDinosaur()) {
-            currentState = ScriptState.DEPOSITING_DINOSAURS;
-        } else {
-            currentState = countItems("Good egg") > countItems("Bad egg") ?
-                    ScriptState.HANDLING_GOOD_EGGS : ScriptState.HANDLING_BAD_EGGS;
+    private void handleEggs() {
+        if (!this.lastHandledWereBadEggs && this.hasBadEggs()) {
+            this.customDelay();
+            this.println("Handling Bad Eggs.");
+            this.moveTo(5230, 2327);
+            this.compostEggs();
+            this.lastHandledWereBadEggs = true;
+        } else if (this.hasGoodEggs()) {
+            this.customDelay();
+            this.println("Handling Good Eggs.");
+            this.moveTo(5209, 2351);
+            this.incubateEggs();
+            this.lastHandledWereBadEggs = false;
         }
+
+        this.customDelay();
+        this.println("Returning to collect more eggs.");
+        this.moveTo(5220, 2348);
+        Execution.delayUntil(10000L, () -> {
+            return !LocalPlayer.LOCAL_PLAYER.isMoving();
+        });
+        this.currentSharpShellsState = SkeletonScript.HandleSharpShells.COLLECT_EGGS;
     }
 
-    private int countItems(String itemName) {
-        return Backpack.getCount(itemName);
+    private void moveTo(int x, int y) {
+        int randomX = x + RandomGenerator.nextInt(-3, 4);
+        int randomY = y + RandomGenerator.nextInt(-3, 4);
+        this.println("Moving to coordinates: [" + randomX + ", " + randomY + "]");
+        Movement.walkTo(randomX, randomY, true);
+        this.println("Waiting for movement to complete...");
+        this.waitForMovement();
+    }
+    private void navigateToEggs(Coordinate Eggs) {
+        if (Client.getLocalPlayer() == null) {
+            return;
+        }
+        Movement.traverse(NavPath.resolve(Eggs));
+        println("Navigating to " + Eggs);
+        Execution.delayUntil(360000, () -> Eggs.equals(Client.getLocalPlayer().getCoordinate()));
     }
 
     private void collectEggs() {
-        if (currentState != ScriptState.COLLECTING_EGGS) return;
-        isCollectingEggs = true;
-        if (!Backpack.isFull()) {
-            println("Collecting eggs...");
-            SceneObjectQuery.newQuery().name("Pile of dinosaur eggs").results().nearest().interact("Collect");
-            Execution.delayUntil(60000, Backpack::isFull);
-            Execution.delay(RandomGenerator.nextInt(800, 1200));
+        Coordinate Eggs = new Coordinate(5221, 2347, 0);
+
+        if (Client.getLocalPlayer() != null) {
+            Coordinate playerCoordinate = Client.getLocalPlayer().getCoordinate();
+
+            if (playerCoordinate.getRegionId() != 20808) {
+                navigateToEggs(Eggs);
+            }
         }
-        isCollectingEggs = false;
+        this.println("Collecting eggs from pile.");
+        this.interactWithObject("Pile of dinosaur eggs", "Collect");
+        Execution.delayUntil(60000L, Backpack::isFull);
+        this.println("Checking if Backpack is full...");
     }
 
-    private void badEggs() {
-        if (currentState != ScriptState.HANDLING_BAD_EGGS) return;
-        EntityResultSet<SceneObject> badEggs = SceneObjectQuery.newQuery().id(123389).results();
-        if (!badEggs.isEmpty()) {
-            println("Composting bad eggs...");
-            Objects.requireNonNull(badEggs.nearest()).interact("Compost");
-            Execution.delayUntil(60000, () -> !Backpack.contains("Bad egg"));
-            Execution.delay(RandomGenerator.nextInt(800, 1200));
+    private void compostEggs() {
+        this.println("Composting Bad Eggs.");
+        this.interactWithObject("Fast compost bin", "Compost");
+        this.println("Waiting for no bad eggs in inventory...");
+        this.waitForNoBadEggs();
+    }
+
+    private void incubateEggs() {
+        this.println("Incubating Good Eggs.");
+        this.interactWithObject("Fast incubator", "Incubate");
+        this.println("Waiting for no good eggs in inventory...");
+        this.waitForNoGoodEggs();
+    }
+
+    private void interactWithObject(String objectName, String action) {
+        this.println("Interacting with: " + objectName);
+        SceneObjectQuery query = SceneObjectQuery.newQuery().name(objectName).option(action);
+        ResultSet<SceneObject> results = query.results();
+        if (!results.isEmpty()) {
+            SceneObject object = (SceneObject) results.first();
+
+            assert object != null;
+
+            object.interact(action);
         }
-        if (!Backpack.isFull()) {
-            currentState = ScriptState.COLLECTING_EGGS;
+
+    }
+
+    private boolean hasBadEggs() {
+        InventoryItemQuery query = (InventoryItemQuery) InventoryItemQuery.newQuery(new int[0]).name("Bad egg");
+        ResultSet<Item> results = query.results();
+        return !results.isEmpty();
+    }
+
+    private boolean hasGoodEggs() {
+        InventoryItemQuery query = (InventoryItemQuery) InventoryItemQuery.newQuery(new int[0]).name("Good egg");
+        ResultSet<Item> results = query.results();
+        return !results.isEmpty();
+    }
+
+    private void waitForMovement() {
+        Player localPlayer = Client.getLocalPlayer();
+        Execution.delayUntil(15000L, () -> {
+            assert localPlayer != null;
+
+            return !localPlayer.isMoving();
+        });
+    }
+
+    private void waitForNoBadEggs() {
+        Execution.delayUntil(60000L, () -> {
+            return !this.hasBadEggs();
+        });
+        this.customDelay();
+    }
+
+    private void waitForNoGoodEggs() {
+        Execution.delayUntil(60000L, () -> {
+            return !this.hasGoodEggs();
+        });
+        this.customDelay();
+    }
+
+    private void bankDinosaurs() {
+        this.println("Checking if at the bank...");
+        if (!this.atBank) {
+            this.println("Moving to the bank...");
+            this.moveToBank();
         } else {
-            currentState = ScriptState.DEPOSITING_EGGS;
+            this.println("At the bank, checking for dinosaurs to deposit...");
+            if (this.hasDinosaursToDeposit()) {
+                this.println("Depositing dinosaurs...");
+                this.depositDinosaurs();
+            } else {
+                this.println("No dinosaurs to deposit.");
+                this.currentSharpShellsState = SkeletonScript.HandleSharpShells.COLLECT_EGGS;
+            }
         }
+
     }
 
-    private void goodEggs() {
-        if (currentState != ScriptState.HANDLING_GOOD_EGGS) return;
-        EntityResultSet<SceneObject> goodEggs = SceneObjectQuery.newQuery().id(123386).results();
-        if (!goodEggs.isEmpty()) {
-            println("Incubating good eggs...");
-            Objects.requireNonNull(goodEggs.nearest()).interact("Incubate");
-            Execution.delayUntil(60000, () -> !Backpack.contains("Good egg"));
-            Execution.delay(RandomGenerator.nextInt(800, 1200));
-        }
-        if (!Backpack.isFull()) {
-            currentState = ScriptState.COLLECTING_EGGS;
-        } else {
-            currentState = ScriptState.DEPOSITING_EGGS;
-        }
-    }
+    private boolean hasDinosaursToDeposit() {
+        String[] dinosaurNames = new String[]{"Feral dinosaur (unchecked)", "Venomous dinosaur (unchecked)", "Ripper dinosaur (unchecked)", "Brutish dinosaur (unchecked)", "Arcane apoterrasaur (unchecked)", "Scimitops (unchecked)", "Bagrada rex (unchecked)", "Spicati apoterrasaur (unchecked)", "Asciatops (unchecked)", "Corbicula rex (unchecked)", "Oculi apoterrasaur (unchecked)", "Malletops (unchecked)", "Pavosaurus rex (unchecked)"};
+        String[] var2 = dinosaurNames;
+        int var3 = dinosaurNames.length;
 
-    private boolean containsAnyDinosaur() {
-        for (String dinosaur : dinosaurNames) {
-            if (Backpack.contains(dinosaur)) {
+        for (int var4 = 0; var4 < var3; ++var4) {
+            String dinosaur = var2[var4];
+            if (this.hasDinosaur(dinosaur)) {
                 return true;
             }
         }
+
         return false;
     }
 
-    private void handleDinosaurs() {
-        if (!containsAnyDinosaur()) {
-            return;
-        }
+    private void moveToBank() {
+        this.println("Moving to the Bank coordinates.");
+        Movement.walkTo(5202, 2366, false);
+        Execution.delayUntil(60000L, () -> {
+            Coordinate currentCoord = Client.getLocalPlayer().getCoordinate();
+            return currentCoord.equals(new Coordinate(5202, 2366, 0));
+        });
+        this.atBank = true;
+    }
 
-        println("Depositing Dinosaurs...");
-        Coordinate bankLocation = new Coordinate(5202, 2367, 0);
-        Coordinate randomisedBankLocation = randomizeLocation(bankLocation, 0);
-        navigateTo(randomisedBankLocation);
-        SceneObjectQuery.newQuery().name("Bank chest").results().nearest().interact("Use");
-        Execution.delayUntil(5000, () -> Interfaces.isOpen(517));
-        Execution.delay(RandomGenerator.nextInt(2000, 3000));
-
+    private void depositDinosaurs() {
+        this.println("Depositing Dinosaurs...");
         AtomicBoolean depositedAny = new AtomicBoolean(false);
+        String[] var3 = dinosaurNames;
+        int var4 = dinosaurNames.length;
 
-        for (String dinosaur : dinosaurNames) {
-            if (containsAnyDinosaur()) {
+        for (int var5 = 0; var5 < var4; ++var5) {
+            String dinosaur = var3[var5];
+            if (this.hasDinosaur(dinosaur)) {
                 ComponentQuery.newQuery(517).componentIndex(15).itemName(dinosaur).results().forEach((component) -> {
                     String depositAction = this.findDepositAction(component);
                     if (depositAction != null) {
                         component.interact(depositAction);
-                        Execution.delay(RandomGenerator.nextInt(1000, 1500));
+                        Execution.delay(RandomGenerator.nextInt(200, 400));
                         depositedAny.set(true);
-                        Execution.delay(RandomGenerator.nextInt(1000, 1500));
+                        Execution.delay(RandomGenerator.nextInt(300, 500));
                     }
 
                 });
@@ -388,12 +530,13 @@ public class SkeletonScript extends LoopingScript {
         } else {
             println("No dinosaurs to deposit.");
         }
-        println("Back to work.");
-        checkAndSwitchStates();
+
+        println("Returning to collect more eggs.");
+        currentState = ScriptState.COLLECTING_EGGS;
     }
 
     private String findDepositAction(Component component) {
-        Iterator<String> var2 = component.getOptions().iterator();
+        Iterator var2 = component.getOptions().iterator();
 
         String option;
         do {
@@ -401,233 +544,113 @@ public class SkeletonScript extends LoopingScript {
                 return null;
             }
 
-            option = var2.next();
+            option = (String) var2.next();
         } while (!option.startsWith("Deposit"));
 
         return option;
     }
 
-    private Coordinate randomizeLocation(Coordinate original, int maxOffset) {
-        Random random = new Random();
-        int xAdjustment = random.nextInt(maxOffset * 2 + 1) - maxOffset;
-        int yAdjustment = random.nextInt(maxOffset * 2 + 1) - maxOffset;
-        return new Coordinate(original.getX() + xAdjustment, original.getY() + yAdjustment, original.getZ());
+    private boolean hasDinosaur(String dinosaurName) {
+        InventoryItemQuery query = (InventoryItemQuery) InventoryItemQuery.newQuery(new int[0]).name(dinosaurName);
+        return !query.results().isEmpty();
     }
 
-    private void moveToBarn() {
-        Coordinate barnLocation = new Coordinate(5303, 2276, 0);
-        Coordinate randomisedBarnLocation = randomizeLocation(barnLocation, 1);
-        if (player.getCoordinate().getRegionId() == 21027 || player.getCoordinate().getRegionId() == 21283) {
-            println("Already in at the Correct Location.");
-            currentState = ScriptState.INITIAL_STATE;
+    private void customDelay() {
+        double chance = Math.random() * 100.0;
+        int delay;
+        if (chance < 5.0) {
+            delay = RandomGenerator.nextInt(10000, 15001);
+            this.println("Applying a long delay of " + delay + "ms (5% chance range)");
+        } else if (chance < 15.0) {
+            delay = RandomGenerator.nextInt(3000, 5001);
+            this.println("Applying a moderate delay of " + delay + "ms (10% chance range)");
         } else {
-            println("Navigating to Correct Location");
-            navigateTo(randomisedBarnLocation);
-            currentState = ScriptState.INITIAL_STATE;
+            delay = RandomGenerator.nextInt(300, 1301);
+            this.println("Applying a short delay of " + delay + "ms (default range)");
         }
+
+        Execution.delay((long) delay);
     }
 
-    private void determineInitialState() {
-        if (Backpack.contains("Potterington Blend #102 Fertiliser")) {
-            currentState = ScriptState.USE_FERTILISER;
-        } else if (Backpack.contains("Tummisaurus Rex")) {
-            currentState = ScriptState.TUMMISAURUS;
-        } else if (Backpack.contains("Rootlesaurus Rex")) {
-            currentState = ScriptState.ROOTLESAURUS;
-        } else if (Backpack.contains("Beanasaurus Rex")) {
-            currentState = ScriptState.BEANASAURUS;
-        } else if (Backpack.contains("Berrisaurus Rex")) {
-            currentState = ScriptState.BERRISAURUS;
-        } else {
-            currentState = ScriptState.COLLECTING_ANIMALS;
-        }
+    public boolean isCutOption() {
+        return this.cutOption;
     }
 
-    private void collectAnimals() {
-        EntityResultSet<SceneObject> StormBarn = SceneObjectQuery.newQuery().name("Storm barn").results();
-        if (StormBarn.isEmpty()) {
-            Coordinate stormBarnLocation = new Coordinate(5305, 2280, 0);
-            Coordinate randomisedStormBarnLocation = randomizeLocation(stormBarnLocation, 2);
-            Movement.walkTo(randomisedStormBarnLocation.getX(), randomisedStormBarnLocation.getY(), true);
-            Execution.delayUntil(60000, () -> isNearLocation(player.getCoordinate(), randomisedStormBarnLocation, 5));
-            if (SceneObjectQuery.newQuery().name("Storm barn").results().nearest().interact("Collect")) {
-                Execution.delayUntil(60000, Backpack::isFull);
-                Execution.delay(RandomGenerator.nextInt(800, 1200));
-            }
-        } else {
-            println("Collecting animals...");
-            SceneObjectQuery.newQuery().name("Storm barn").results().nearest().interact("Collect");
-            Execution.delayUntil(60000, Backpack::isFull);
-            Execution.delay(RandomGenerator.nextInt(800, 1200));
-            currentState = ScriptState.TUMMISAURUS;
-        }
+    public void setCutOption(boolean cutOption) {
+        this.cutOption = cutOption;
     }
 
-    private void tummisaurus() {
-        EntityResultSet<SceneObject> tummisaurus = SceneObjectQuery.newQuery().name("Rooty mush trough").results();
-        Coordinate tummisaurusLocation = new Coordinate(5289, 2259, 0);
-        Coordinate randomisedTummisaurusLocation = randomizeLocation(tummisaurusLocation, 1);
-        if (tummisaurus.isEmpty()) {
-            Movement.walkTo(randomisedTummisaurusLocation.getX(), randomisedTummisaurusLocation.getY(), true);
-            Execution.delayUntil(60000, () -> isNearLocation(player.getCoordinate(), randomisedTummisaurusLocation, 10));
-            if (SceneObjectQuery.newQuery().name("Rooty mush trough").results().nearest().interact("Feed")) {
-                Execution.delayUntil(60000, () -> !Backpack.contains("Tummisaurus Rex"));
-                Execution.delay(RandomGenerator.nextInt(800, 1200));
-            }
-        } else {
-            println("Feeding tummisaurus...");
-            Objects.requireNonNull(tummisaurus.nearest()).interact("Feed");
-            Execution.delayUntil(60000, () -> !Backpack.contains("Tummisaurus Rex"));
-            Execution.delay(RandomGenerator.nextInt(800, 1200));
-        }
-        currentState = ScriptState.ROOTLESAURUS;
+    public boolean isDryOption() {
+        return this.dryOption;
     }
 
-    private void rootlesaurus() {
-        EntityResultSet<SceneObject> rootlesaurus = SceneObjectQuery.newQuery().name("Beany mush trough").results();
-        Coordinate rootlesaurusLocation = new Coordinate(5311, 2293, 0);
-        Coordinate randomisedrootlesaurusLocation = randomizeLocation(rootlesaurusLocation, 2);
-        if (rootlesaurus.isEmpty()) {
-            Movement.walkTo(randomisedrootlesaurusLocation.getX(), randomisedrootlesaurusLocation.getY(), true);
-            Execution.delayUntil(60000, () -> isNearLocation(player.getCoordinate(), randomisedrootlesaurusLocation, 5));
-            println("Feeding rootlesaurus...");
-            if (SceneObjectQuery.newQuery().name("Beany mush trough").results().nearest().interact("Feed")) {
-                Execution.delayUntil(60000, () -> !Backpack.contains("Rootlesaurus Rex"));
-                Execution.delay(RandomGenerator.nextInt(800, 1200));
-            }
-
-        } else {
-            println("Feeding rootlesaurus...");
-            Objects.requireNonNull(rootlesaurus.nearest()).interact("Feed");
-            Execution.delayUntil(60000, () -> !Backpack.contains("Rootlesaurus Rex"));
-            Execution.delay(RandomGenerator.nextInt(800, 1200));
-        }
-        currentState = ScriptState.BEANASAURUS;
+    public void setDryOption(boolean dryOption) {
+        this.dryOption = dryOption;
     }
 
-    private void beanasaurus() {
-        EntityResultSet<SceneObject> beanasaurus = SceneObjectQuery.newQuery().name("Berry mush trough").results();
-        Coordinate beanasaurusLocation = new Coordinate(5329, 2289, 0);
-        Coordinate randomisedbeanasaurusLocation = randomizeLocation(beanasaurusLocation, 2);
-        if (beanasaurus.isEmpty()) {
-            Movement.walkTo(randomisedbeanasaurusLocation.getX(), randomisedbeanasaurusLocation.getY(), true);
-            Execution.delayUntil(60000, () -> isNearLocation(player.getCoordinate(), randomisedbeanasaurusLocation, 5));
-            if (SceneObjectQuery.newQuery().name("Berry mush trough").results().nearest().interact("Feed")) {
-                Execution.delayUntil(60000, () -> !Backpack.contains("Beanasaurus Rex"));
-                Execution.delay(RandomGenerator.nextInt(800, 1200));
-            }
-        } else {
-            println("Feeding beanasaurus...");
-            Objects.requireNonNull(beanasaurus.nearest()).interact("Feed");
-            Execution.delayUntil(60000, () -> !Backpack.contains("Beanasaurus Rex"));
-            Execution.delay(RandomGenerator.nextInt(800, 1200));
-        }
-        currentState = ScriptState.BERRISAURUS;
+    public boolean isCutAndDryOption() {
+        return this.cutAndDryOption;
     }
 
-    private void berrisaurus() {
-        EntityResultSet<SceneObject> berrisaurus = SceneObjectQuery.newQuery().name("Cerealy mush trough").results();
-        Coordinate berrisaurusLocation = new Coordinate(5329, 2269, 0);
-        Coordinate randomisedberrisaurusLocation = randomizeLocation(berrisaurusLocation, 2);
-        if (berrisaurus.isEmpty()) {
-            Movement.walkTo(randomisedberrisaurusLocation.getX(), randomisedberrisaurusLocation.getY(), true);
-            Execution.delayUntil(60000, () -> isNearLocation(player.getCoordinate(), randomisedberrisaurusLocation, 5));
-             if (SceneObjectQuery.newQuery().name("Cerealy mush trough").results().nearest().interact("Feed")) {
-                 Execution.delayUntil(60000, () -> !Backpack.contains("Berrisaurus Rex"));
-                 Execution.delay(RandomGenerator.nextInt(800, 1200));
-             }
-        } else {
-            println("Feeding berrisaurus...");
-            Objects.requireNonNull(berrisaurus.nearest()).interact("Feed");
-            Execution.delayUntil(60000, () -> !Backpack.contains("Berrisaurus Rex"));
-            Execution.delay(RandomGenerator.nextInt(800, 1200));
-        }
-        currentState = ScriptState.USE_FERTILISER;
+    public void setCutAndDryOption(boolean cutAndDryOption) {
+        this.cutAndDryOption = cutAndDryOption;
     }
 
-    private void useFertiliser() {
-        ResultSet<Item> fertiliserItems = InventoryItemQuery.newQuery(93).name("Potterington Blend #102 Fertiliser").results();
-        if (!fertiliserItems.isEmpty()) {
-            println("Using fertiliser...");
+    public void HandleDinoArrows() {
+        Coordinate Shafts = new Coordinate(5234, 2330, 0);
 
-            Item firstFertiliser = fertiliserItems.first();
-            if (firstFertiliser != null) {
-                Backpack.interact("Potterington Blend #102 Fertiliser", "Ignite");
-                Execution.delayUntil(60000, () -> !Backpack.contains("Potterington Blend #102 Fertiliser"));
-                Execution.delay(RandomGenerator.nextInt(800, 1200));
-                currentState = ScriptState.COLLECTING_ANIMALS;
+        if (Client.getLocalPlayer() != null) {
+            Coordinate playerCoordinate = Client.getLocalPlayer().getCoordinate();
+            if (!playerCoordinate.equals(Shafts)) {
+                navigateTo(Shafts);
             }
         }
-    }
-
-    private void moveToZygomite() {
-        SceneObject mysticalTreeObject = SceneObjectQuery.newQuery().name("Mystical tree").results().nearest();
-        Coordinate mysticalTree = new Coordinate(5301, 2293, 0);
-        Coordinate randomisedmysticalTree = randomizeLocation(mysticalTree, 1);
-
-
-        if (player.getCoordinate().getRegionId() == 20772) {
-            println("Already in the Correct Location.");
-            currentState = ScriptState.CHOOSE_OPTION;
-        } else {
-            println("Navigating to Mystical Tree");
-            navigateTo(randomisedmysticalTree);
-
-            if (mysticalTreeObject != null) {
-                if (mysticalTreeObject.interact("Teleport")) {
-                    println("Teleported using Mystical Tree");
-                    Execution.delay(RandomGenerator.nextInt(3000, 5000));
-                    if (Interfaces.isOpen(1188)) {
-                        println("Teleported to Mystical Tree.");
-                        Execution.delay(RandomGenerator.nextInt(3000, 5000));
-                        Dialog.interact("Ben's carestyling salon.");
-                        Execution.delay(RandomGenerator.nextInt(3000, 5000));
-                        currentState = ScriptState.CHOOSE_OPTION;
-                    }
+        switch (this.currentDinoState) {
+            case CONFIGURE:
+                this.interactWithScruffy("Configure");
+                if (Interfaces.isOpen(720)) {
+                    this.currentDinoState = SkeletonScript.HandleDinoArrows.SELECT_OPTION;
                 }
-            }
+                break;
+            case SELECT_OPTION:
+                this.selectOptionBasedOnGUI();
+                this.currentDinoState = SkeletonScript.HandleDinoArrows.PERFORM_ACTION;
+                break;
+            case PERFORM_ACTION:
+                this.performActionBasedOnOption();
+                this.currentDinoState = SkeletonScript.HandleDinoArrows.WAIT_FOR_ANIMATION_END;
+                break;
+            case WAIT_FOR_ANIMATION_END:
+                this.interactWithAnyNpcFromList();
+                this.currentDinoState = SkeletonScript.HandleDinoArrows.PERFORM_ACTION;
         }
+
+        Execution.delay(1000L);
     }
 
-    private void chooseOption() {
-        String selectedOption = selectActionOnInterface();
+    private void interactWithScruffy(String action) {
+        EntityResultSet<Npc> npcs = ((NpcQuery) ((NpcQuery) NpcQuery.newQuery().name("Scruffy zygomite")).option(action)).results();
+        if (!npcs.isEmpty()) {
+            assert Client.getLocalPlayer() != null;
 
-        if ("Cut".equals(selectedOption) && VarManager.getVarValue(VarDomainType.PLAYER, 10431) == 9306123 ||
-                "Dry".equals(selectedOption) && VarManager.getVarValue(VarDomainType.PLAYER, 10431) == 9371659 ||
-                "Cut and Dry".equals(selectedOption) && VarManager.getVarValue(VarDomainType.PLAYER, 10431) == 9240587) {
-            println("Selected option is already active. Skipping Zygomite interaction.");
-            currentState = ScriptState.INTERACT_WITH_ZYGOMITE;
-            return;
-        }
-
-        EntityResultSet<Npc> scruffies = NpcQuery.newQuery().name("Scruffy zygomite").results();
-        if (!scruffies.isEmpty()) {
-            Npc scruffy = scruffies.nearestTo(player.getCoordinate());
+            Npc scruffy = (Npc) npcs.nearestTo(Client.getLocalPlayer().getCoordinate());
             if (scruffy != null) {
-                boolean selectionSuccess = scruffy.interact("Configure");
-                if (selectionSuccess) {
-                    Execution.delay(RandomGenerator.nextInt(2500, 3500));
-                    if (Interfaces.isOpen(720)) {
-                        selectedOption = selectActionOnInterface();
-                        println("Option selected: " + selectedOption);
-                        Execution.delayUntil(5000, () -> !Interfaces.isOpen(720));
-                        Execution.delay(RandomGenerator.nextInt(1000, 2000));
-                        currentState = ScriptState.INTERACT_WITH_ZYGOMITE;
-                    } else {
-                        println("Failed to open expected interface after interacting with Scruffy Zygomite.");
-                    }
+                boolean interactionSuccess = scruffy.interact(action);
+                if (interactionSuccess) {
+                    this.println("Successfully interacted with Scruffy Zygomite.");
                 } else {
-                    println("Failed to interact with Scruffy Zygomite.");
+                    this.println("Failed to interact with Scruffy Zygomite.");
                 }
             }
         } else {
-            println("Scruffy Zygomite not found.");
+            this.println("Scruffy Zygomite not found.");
         }
+
+        this.customDelay();
     }
 
-    private String selectActionOnInterface() {
+    private void selectOptionBasedOnGUI() {
         String selectedOption = "";
-
         if (cutOption) {
             selectedOption = "Cut";
             MiniMenu.interact(ComponentAction.DIALOGUE.getType(), 0, -1, 47185940);
@@ -637,57 +660,152 @@ public class SkeletonScript extends LoopingScript {
         } else if (cutAndDryOption) {
             selectedOption = "Cut and Dry";
             MiniMenu.interact(ComponentAction.DIALOGUE.getType(), 0, -1, 47185921);
-        } else {
-            println("No valid option selected for Scruffy Zygomite.");
-            selectedOption = "";
         }
 
-        return selectedOption;
+        println("Option selected: " + selectedOption);
+        Execution.delayUntil(5000L, () -> !Interfaces.isOpen(720));
+        Execution.delay(RandomGenerator.nextInt(1000, 2000));
     }
 
-    private void interactBasedOnOption() {
+    private void performActionBasedOnOption() {
         if (cutOption) {
-            interactWithSpecificNpc("Cut");
+            this.interactWithScruffy("Cut");
         } else if (dryOption) {
-            interactWithSpecificNpc("Dry");
+            this.interactWithScruffy("Dry");
         } else if (cutAndDryOption) {
-            interactWithSpecificNpc("Cut and dry");
+            this.interactWithScruffy("Cut and dry");
+        } else {
+            this.println("No action selected for Scruffy zygomite.");
         }
+
     }
 
-    private void interactWithSpecificNpc(String action) {
-        List<Coordinate> zygomiteLocations = Arrays.asList(
-                new Coordinate(5232, 2326, 0),
-                new Coordinate(5234, 2327, 0),
-                new Coordinate(5236, 2328, 0)
-        );
+    private void interactWithAnyNpcFromList() {
+        int[] npcIds = new int[]{31239, 31242, 31238, 31237, 31241, 31243};
+        boolean npcInteracted = false;
 
-        Collections.shuffle(zygomiteLocations);
+        while (!npcInteracted) {
+            int[] var3 = npcIds;
+            int var4 = npcIds.length;
 
-        for (Coordinate location : zygomiteLocations) {
-            Optional<Npc> scruffy = findScruffyZygomiteAtLocation(location);
+            for (int var5 = 0; var5 < var4; ++var5) {
+                int npcId = var3[var5];
+                EntityResultSet<Npc> npcResultSet = ((NpcQuery) NpcQuery.newQuery().id(npcId)).results();
+                if (!npcResultSet.isEmpty()) {
+                    assert Client.getLocalPlayer() != null;
 
-            if (scruffy.isPresent() && scruffy.get().getOptions().contains(action)) {
-                boolean interactionSuccess = scruffy.get().interact(action);
-                if (interactionSuccess) {
-                    println("Interacted with Scruffy Zygomite using " + action + ".");
-                    Execution.delay(RandomGenerator.nextInt(2500, 3500));
-                    Execution.delayUntil(120000, () -> player.getOverheadText().equals("Another satisfied customer!"));
-                    Execution.delay(RandomGenerator.nextInt(800, 1200));
+                    Npc npc = (Npc) npcResultSet.nearestTo(Client.getLocalPlayer().getCoordinate());
+                    if (npc != null) {
+                        this.customDelayWithChance();
+                        npc.interact("Interact");
+                        this.waitForNpcToDisappear(npcId);
+                        npcInteracted = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!npcInteracted) {
+                this.println("No specified NPCs found. Retrying...");
+                this.customDelay();
+            }
+        }
+
+    }
+
+    private void waitForNpcToDisappear(int npcId) {
+        this.println("Waiting for NPC ID: " + npcId + " to disappear...");
+        long startTime = System.currentTimeMillis();
+        long timeout = this.randomIntInRange1(15000, 30000);
+        long checkInterval = 5000L;
+        boolean npcDisappeared = false;
+
+        while (System.currentTimeMillis() - startTime < timeout && !npcDisappeared) {
+            EntityResultSet<Npc> npcResultSet = ((NpcQuery) NpcQuery.newQuery().id(npcId)).results();
+            npcDisappeared = npcResultSet.isEmpty();
+            if (!npcDisappeared) {
+                long timeLeft = (startTime + timeout - System.currentTimeMillis()) / 1000L;
+                this.println("NPC not disappeared yet. Time left: " + timeLeft + " seconds");
+
+                try {
+                    Thread.sleep(checkInterval);
+                } catch (InterruptedException var13) {
+                    Thread.currentThread().interrupt();
+                    this.println("Interrupted while waiting.");
                     break;
-                } else {
-                    println("Failed to interact with Scruffy Zygomite at " + location + ".");
                 }
             }
         }
+
+        if (npcDisappeared) {
+            this.println("NPC ID: " + npcId + " has disappeared.");
+        } else {
+            this.println("Timeout reached. NPC ID: " + npcId + " might still be present.");
+        }
+
     }
 
-    private Optional<Npc> findScruffyZygomiteAtLocation(Coordinate location) {
-        EntityResultSet<Npc> npcs = NpcQuery.newQuery().name("Scruffy zygomite").results();
+    private long randomIntInRange1(int min, int max) {
+        return (long) min + (long) (Math.random() * (double) (max - min + 1));
+    }
 
-        return npcs.stream()
-                .filter(npc -> npc.getCoordinate().equals(location))
-                .findFirst();
+    private void customDelayWithChance() {
+        double chance = Math.random() * 100.0;
+        int delay;
+        if (chance <= 4.0) {
+            delay = this.randomIntInRange(15000, 30000);
+        } else if (chance <= 14.0) {
+            delay = this.randomIntInRange(5000, 15000);
+        } else {
+            delay = this.randomIntInRange(1000, 2000);
+        }
+
+        this.println("Delaying for " + delay + "ms before next action.");
+
+        try {
+            Thread.sleep((long) delay);
+        } catch (InterruptedException var5) {
+            Thread.currentThread().interrupt();
+            this.println("Delay interrupted.");
+        }
+
+    }
+
+    private int randomIntInRange(int min, int max) {
+        return (int) (Math.random() * (double) (max - min + 1)) + min;
+    }
+
+    private static enum HandleSharpShells {
+        COLLECT_EGGS,
+        HANDLE_EGGS,
+        BANK_DINOSAURS;
+
+        private HandleSharpShells() {
+        }
+    }
+
+    private static enum HandleDinoArrows {
+        CONFIGURE,
+        SELECT_OPTION,
+        PERFORM_ACTION,
+        WAIT_FOR_ANIMATION_END;
+
+        private HandleDinoArrows() {
+        }
+    }
+
+    private static enum ScriptState {
+        COLLECT_FROM_STORM_BARN,
+        FEED_TUMMISAURUS,
+        MOVE_TO_INTERMEDIATE_POINT,
+        FEED_ROOTLESAURUS,
+        FEED_BEANASAURUS,
+        FEED_BERRISAURUS,
+        USE_FERTILISER;
+
+        private ScriptState() {
+        }
     }
 }
-//test2
+
+
