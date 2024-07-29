@@ -11,7 +11,7 @@ import java.time.Instant;
 
 public class SkeletonScriptGraphicsContext extends ScriptGraphicsContext {
 
-    private SkeletonScript script;
+    private FletchingAndFiremaking script;
     boolean isScriptRunning = false;
     private long totalElapsedTime = 0;
     private Instant startTime;
@@ -20,7 +20,7 @@ public class SkeletonScriptGraphicsContext extends ScriptGraphicsContext {
     int startingFiremakingXP = Skills.FIREMAKING.getSkill().getExperience();
     private final int startingFiremakingLevel;
 
-    public SkeletonScriptGraphicsContext(ScriptConsole scriptConsole, SkeletonScript script) {
+    public SkeletonScriptGraphicsContext(ScriptConsole scriptConsole, FletchingAndFiremaking script) {
         super(scriptConsole);
         this.script = script;
         startTime = Instant.now();
